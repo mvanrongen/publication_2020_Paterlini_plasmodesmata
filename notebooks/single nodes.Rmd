@@ -1,0 +1,303 @@
+---
+title: "1-node data"
+date: 2020-12-10
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+---
+
+```{r message=FALSE}
+library(tidyverse)
+library(broom)
+library(patchwork)
+library(segmented)
+library(ggbeeswarm)
+
+theme_set(theme_bw())
+
+# we introduce a dodge graphical parameter to better space the groups
+dodge <- position_dodge(width = 0.9)
+
+```
+
+
+# MY DATA
+
+```{r}
+
+Col <- read.csv("../data/One node/Col-0_1_node_CK.csv")
+
+SAPL <- read.csv("../data/One node/SAPL_1_node_CK.csv")
+
+CALS8 <- read.csv("../data/One node/CALS8_1_node_CK.csv")
+
+data <- rbind(Col, SAPL, CALS8)
+
+data <- data %>% 
+  rename(bud_location = bud,
+         genotype = gt,
+         sample_id = sample,
+         start_date = date)
+
+data <- gather(data, key = "day", value = "bud_length",
+               day_00, day_01, day_02, day_03, day_04, day_05, day_06, day_07, day_08) 
+
+data$day <- gsub("day_0","", data$day)
+
+data$genotype <- gsub("sAPL:icals3m","SAPL:icals3m", data$genotype)
+data$genotype <- gsub("cals8:icals3m","CALS8:icals3m", data$genotype)
+
+data$day <- as.numeric(data$day)
+
+data$treatment <- gsub(".EST", " +\nEST (10uM)", data$treatment)
+data$treatment <- gsub("CK", "CK (0.1uM)", data$treatment)
+
+data$bud_location <- gsub("top", "Only bud", data$bud_location)
+
+data <- data %>% mutate(genotype = factor(genotype, levels = c("Col-0", "SAPL:icals3m", "CALS8:icals3m"))) %>% mutate(assay="1-nodes with intact apices")
+
+```
+
+```{r}
+
+plot1 <- ggplot(data, aes(x = day, y = bud_length, colour= treatment)) +
+  geom_line(aes(group = interaction(genotype, treatment, sample_id)), 
+            alpha = 1) +
+  theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_text(size = 19), 
+        axis.title.y = element_text(size = 19), 
+        axis.text.x = element_text(size = 19), 
+        axis.text.y = element_text(size = 19), 
+        strip.text.x = element_text(size = 19), 
+        strip.text.y = element_text(size = 19),
+        legend.title = element_blank()) +   
+  labs(x="Days", y="Bud length (mm)") +
+  scale_x_continuous(breaks=seq(0,8,1)) +
+  scale_y_continuous(limits=c(0,60), breaks=seq(0,60,20)) +
+  scale_fill_manual(values = c("coral","royalblue")) +
+  scale_colour_manual(values = c("coral", "royalblue"))+
+  theme(legend.position = "none") +
+  facet_grid(bud_location + treatment ~ assay + genotype)
+
+plot1
+
+stats <- data %>% 
+  group_by(bud_location, genotype, treatment, assay, day) %>% 
+  dplyr::summarise(mean = mean(bud_length, na.rm = TRUE),
+                   sd = sd(bud_length, na.rm = TRUE))
+
+stats2 <- data %>% 
+  group_by(bud_location, genotype, treatment, assay, day) %>% tally()
+
+stats3 <- merge(stats,stats2,by=c("bud_location","genotype", "treatment", "assay", "day")) %>% mutate(SE = sd/sqrt(n))
+
+plot2 <- ggplot(stats3, aes(x=day, y=mean, colour=treatment)) + 
+geom_vline(data=filter(stats3, genotype=="Col-0"), 
+aes(xintercept=5), size=2, colour="orange1", alpha=0.5) + 
+  geom_vline(data=filter(stats3, genotype=="Col-0"), 
+aes(xintercept=5), size=2, colour="steelblue2", alpha=0.5) +
+  geom_vline(data=filter(stats3, genotype=="SAPL:icals3m"), 
+aes(xintercept=5), size=2, colour="orange1", alpha=0.5) + 
+  geom_vline(data=filter(stats3, genotype=="SAPL:icals3m"), aes(xintercept=5), size=2, colour="steelblue2", alpha=0.5) +
+  geom_vline(data=filter(stats3, genotype=="CALS8:icals3m"), aes(xintercept=5), size=2, colour="orange1", alpha=0.5) + 
+  geom_vline(data=filter(stats3, genotype=="CALS8:icals3m"), aes(xintercept=5), size=2, colour="steelblue2", alpha=0.5) +
+  geom_errorbar(aes(ymin=mean-SE, ymax=mean+SE), width=.3, colour="black") +
+    geom_line(size=1) +
+    geom_point(size=2)+
+    theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_text(size = 16), 
+        axis.title.y = element_text(size = 16), 
+        axis.text.x = element_text(size = 16), 
+        axis.text.y = element_text(size = 16), 
+        strip.text.x = element_text(size = 14), 
+        strip.text.y = element_text(size = 14), 
+        legend.text = element_text(size=16),
+        legend.title = element_blank()) +   
+  labs(x="Days", y="Mean bud length \u00b1 SE (mm)") +
+  scale_colour_manual(values = c("coral", "royalblue"))+
+  theme(legend.position = "none") +
+  facet_grid( ~ assay + genotype)+
+  scale_y_continuous(breaks=seq(0,30,5)) +
+  scale_x_continuous(breaks=seq(0,8,1))
+
+plot2
+
+# testing 
+
+a <- data %>% group_by(genotype, day) %>% do(tidy(wilcox.test(bud_length~treatment, data=.))) %>% ungroup() %>%
+  mutate(p.adjust=p.adjust(p.value, method = "fdr"))
+
+```
+
+#Calculating the metrics defined in `one_node_metrics`
+
+
+```{r}
+
+source("../scripts/one_node_metrics.R")
+
+metrics_summary <- data %>% 
+  nest(data = c(-sample_id, -genotype, -treatment, -bud_location, -start_date, - assay)) %>% 
+  # Run the one_node_metrics function on each individual growth curve
+  mutate(segmented_data = map(data, ~ one_node_metrics(.x$day, .x$bud_length))) %>%
+  unnest(cols = c(segmented_data)) 
+```
+
+### breakpoint day
+
+```{r}
+
+plot3 <- metrics_summary %>% 
+  group_by(bud_location, sample_id, genotype, treatment) %>% 
+  ggplot(aes(x = bud_location, y = breakpoint_day, fill=treatment, colour=treatment)) +
+  geom_violin(alpha=0.25) +
+  geom_quasirandom(width = 0.1, alpha = 0.6, dodge.width = 0.9) +
+  stat_summary(fun.y = median, fun.ymin = median, fun.ymax = median, geom = "crossbar", colour = "black", size = 0.5, width = 0.3, alpha=1, position = dodge) +
+  theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_blank(), 
+        axis.title.y = element_text(size = 22), 
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 22), 
+        axis.text.y = element_text(size = 22), 
+        strip.text.x = element_text(size = 20), 
+        strip.text.y = element_text(size = 22),  
+        legend.position = "none") + 
+  scale_y_continuous(limits= c(2,7), breaks = c(2,3,4,5,6,7)) +
+  ylab("Breakpoint day for \n actively growing buds") +
+  scale_fill_manual(values = c("coral","royalblue", "black")) +
+  scale_colour_manual(values = c("coral","royalblue", "black"))+
+  facet_grid(assay~genotype+treatment)
+
+# last line just a trick to facilitate illustrator figure compiling
+
+plot3
+
+metrics_summary %>% select(sample_id, genotype, treatment, breakpoint_day) %>% 
+  group_by(genotype) %>% 
+  summarise(test=list(ks.test(breakpoint_day[treatment=="CK (0.1uM)"], breakpoint_day[treatment=="CK (0.1uM) +\nEST (10uM)"]))) %>%
+  mutate(tidy_test=map(test, tidy)) %>%
+  unnest(tidy_test) %>% mutate(p_adj=p.adjust(p.value, method = "fdr"))
+
+```
+
+# % of active buds
+
+```{r}
+
+x <- metrics_summary %>%
+ drop_na() %>% group_by(genotype, treatment, bud_location) %>%  count() %>%
+  rename(n_active = n)
+y <- metrics_summary %>% group_by(genotype, treatment, bud_location) %>%  count() %>%  rename(n_total = n)
+
+final <- x %>%
+  full_join(y) %>%
+  mutate(percentage = (n_active/n_total)*100)
+
+dodge2 <- position_dodge(width = 0.2)
+
+plot8 <- ggplot(final, aes(x=treatment, y=percentage, fill = treatment, colour = treatment)) + geom_point(size=4) + 
+  ylab("% of total 2-nodes \n that did not activate") +  
+  xlab("Genotype") +
+    theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_blank(), 
+        axis.title.y = element_text(size = 16), 
+        axis.text.x = element_blank(), 
+        axis.text.y = element_text(size = 16), 
+        strip.text.x = element_text(size = 14), 
+        strip.text.y = element_text(size = 14), 
+        legend.position =  "none") + scale_y_continuous(name="% active buds", limits=c(0, 100), breaks = c(0,25, 50, 75, 100)) +
+  scale_colour_manual(values = c("coral", "royalblue"))+ 
+  facet_grid( ~ genotype)
+
+plot8
+
+
+```
+
+```{r}
+
+# keep only those that grew
+
+x <- metrics_summary %>%
+ drop_na() %>% select(genotype, treatment, sample_id, assay, bud_location)
+
+# from 181 to 159 samples. 22 discarded
+
+```
+
+
+
+```{r}
+
+# growth parameters
+
+source("../scripts/growth_metrics.R")
+
+metrics_summary <- data %>% 
+  nest(data = c(-sample_id, -genotype, -treatment, - assay, -start_date)) %>% 
+  # Run the one_node_metrics function on each individual growth curve
+  mutate(segmented_data = map(data, ~ one_node_metrics(.x$day, .x$bud_length))) %>%
+  unnest(cols = c(segmented_data))
+
+```
+
+
+```{r}
+
+# inner join to retain growth of only active buds
+
+a <- inner_join(metrics_summary, x)
+
+# 1431 samples from #1629. Each dropped bud would have 9 rows. 22x9 = 198 makes sense
+
+# antijoin to retain growth of non active buds
+
+b <- anti_join(metrics_summary, x)
+
+```
+
+### growth rate 
+
+```{r}
+
+a$day <- as.factor(a$day)
+b$day <- as.factor(b$day)
+
+plot2 <- ggplot(a, aes(x=day, y=d1_measured, fill=treatment))+
+  geom_boxplot(alpha=0.8) +
+  geom_vline(data=filter(a, genotype=="Col-0"), 
+aes(xintercept=5), size=2, colour="orange1", alpha=0.5) + 
+  geom_vline(data=filter(a, genotype=="Col-0"), 
+aes(xintercept=5), size=2, colour="steelblue2", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="SAPL:icals3m"), 
+aes(xintercept=5), size=2, colour="orange1", alpha=0.5) + 
+  geom_vline(data=filter(a, genotype=="SAPL:icals3m"), aes(xintercept=5), size=2, colour="steelblue2", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="CALS8:icals3m"), aes(xintercept=5), size=2, colour="orange1", alpha=0.5) + 
+  geom_vline(data=filter(a, genotype=="CALS8:icals3m"), aes(xintercept=5), size=2, colour="steelblue2", alpha=0.5) + 
+  #geom_rect(data=filter(metrics_summary, genotype=="SAPL:icals3m"), aes(xmin = 5.5, xmax = 9.5, ymin = -Inf, ymax = Inf), fill = "pink", alpha = 0.01) + geom_boxplot(alpha=0.5) +
+    theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_text(size = 16), 
+        axis.title.y = element_text(size = 16), 
+        axis.text.x = element_text(size = 16), 
+        axis.text.y = element_text(size = 16), 
+        strip.text.x = element_text(size = 14), 
+        strip.text.y = element_text(size = 14), 
+        legend.text = element_text(size=14),
+        legend.title = element_blank()) +   
+  labs(x="Days", y="Growth rate in active buds (mm/day)") +
+  scale_fill_manual(values = c("coral", "royalblue"))+
+  theme(legend.position = "none") +
+  facet_grid(~ assay + genotype)
+
+plot2
+
+a_new <- metrics_summary %>% drop_na() %>% group_by(genotype, day) %>% do(tidy(wilcox.test(d1_measured~treatment, data=.)))%>% ungroup() %>%
+  mutate(p.adjust=p.adjust(p.value, method = "fdr"))
+
+```
+
+
+
+
+

@@ -1,0 +1,472 @@
+---
+title: "Andrea_2-node intact mutants"
+date: 2020-12-10
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+---
+
+# general parameters
+
+```{r message=FALSE}
+
+library(tidyverse)
+library(broom)
+library(patchwork)
+library(segmented)
+library(ggbeeswarm)
+
+theme_set(theme_bw())
+
+# we introduce a dodge graphical parameter to better space the groups
+dodge <- position_dodge(width = 0.9)
+
+```
+
+# read data
+
+```{r}
+
+brc12 <- read.csv("../data/Two nodes hormones/brc1,2_SAPL_2_node.csv") 
+
+d14 <- read.csv("../data/Two nodes hormones/d14_SAPL_2_node.csv") 
+
+pintr <- read.csv("../data/Two nodes hormones/pin3,4,7_SAPL_2_node.csv")
+
+
+data_raw <- rbind(brc12, d14, pintr) %>% mutate(assay="2-nodes with intact apices")
+
+# rename some columns to match Martin's function
+
+data_raw <- data_raw %>% 
+  rename(bud_location = bud,
+         genotype = gt,
+         sample_id = sample,
+         start_date = date)
+
+# gather
+
+data <- gather(data_raw, key = "day", value = "bud_length",
+               day_00, day_01, day_02, day_03, day_04, day_05, day_06, day_07, day_08) 
+
+# some more cleaning and fixing of names 
+
+data$day <- gsub("day_0","", data$day)
+
+data$genotype <- gsub("sAPL:icals3m","SAPL:icals3m", data$genotype)
+data$genotype <- gsub("brc1-2","brc1", data$genotype)
+data$genotype <- gsub("d14","d14\n", data$genotype)
+data$genotype <- gsub("brc1","brc1\n", data$genotype)
+data$genotype <- gsub("pin3,4,7","pin3,4,7\n", data$genotype)
+data$treatment <- gsub("CK", "CK (0.1uM)", data$treatment)
+data$treatment <- gsub(".EST", " +\nEST (10uM)", data$treatment)
+
+data$day <- as.numeric(data$day)
+
+# graphical ordering
+
+data <- data %>% mutate(genotype = factor(genotype, levels = c("d14\n SAPL:icals3m", "brc1\n SAPL:icals3m", "pin3,4,7\n SAPL:icals3m"))) %>% mutate(assay="2-nodes with intact apices")
+
+```
+
+# single bud traces
+
+```{r}
+
+plot1 <- ggplot(data, aes(x = day, y = bud_length, colour= treatment)) +
+  geom_line(aes(group = interaction(genotype, treatment, sample_id)), 
+            alpha = 1) +
+  theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_text(size = 19), 
+        axis.title.y = element_text(size = 19), 
+        axis.text.x = element_text(size = 19), 
+        axis.text.y = element_text(size = 19), 
+        strip.text.x = element_text(size = 19), 
+        strip.text.y = element_text(size = 19), 
+        legend.text = element_text(size=14),
+        legend.title = element_blank()) +   
+  labs(x="Days", y="Bud length (mm)") +
+  scale_x_continuous(breaks=seq(0,8,1)) +
+  scale_y_continuous(limits=c(0,50), breaks=seq(0,50,10)) +
+  scale_fill_manual(values = c("coral","royalblue")) +
+  scale_colour_manual(values = c("coral", "royalblue"))+
+  theme(legend.position = "none") +
+  facet_grid(bud_location + treatment ~ assay + genotype)
+
+
+plot1
+
+
+```
+
+
+### Mitchison plots
+
+```{r}
+
+# create a separate object for colouring of point at day 8
+
+x <- data %>% 
+  group_by(sample_id, treatment) %>% 
+  pivot_wider(names_from = bud_location,
+              values_from = bud_length)
+
+plot8 <- data %>% 
+  group_by(sample_id, treatment) %>% 
+  pivot_wider(names_from = bud_location,
+              values_from = bud_length) %>%
+  ggplot(aes(bottom, top, group = sample_id)) +
+  geom_line(aes(colour = treatment))  +
+  geom_point(data=filter(x, day=="8"), aes(colour = "black", alpha=0.8), show.legend = FALSE) +
+  geom_abline(intercept = 0, slope = 1, linetype="dashed", show.legend = FALSE)  + 
+  facet_grid(treatment ~ assay + genotype) +
+  theme(legend.position = "none") +
+  theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_text(size = 19), 
+        axis.title.y = element_text(size = 19), 
+        axis.text.x = element_text(size = 19), 
+        axis.text.y = element_text(size = 19), 
+        strip.text.x = element_text(size = 19), 
+        strip.text.y = element_text(size = 19), 
+        legend.text = element_text(size=14),
+        legend.title = element_blank(),
+        legend.position = "none") + 
+  ylab("Length of top bud (mm)") + 
+  xlab("Length of bottom bud (mm)") +
+  scale_fill_manual(values = c("black","coral","royalblue")) +
+  scale_colour_manual(values = c("black","coral","royalblue"))+
+  scale_y_continuous(limits = c(0,50)) +
+  scale_x_continuous(limits = c(0,50)) 
+
+plot8
+
+
+```
+
+# THE PROBLEM OF TOP-BOTTOM NOT BEING REPRESENTATIVE in a 2 node - switch to longest, shorter
+
+```{r}
+
+# the code is a bit clanky potentially, I took some older code from martin and re-purposed with modfications
+
+outcome.nodes =
+  data_raw %>%
+  select(sample_id, assay, genotype, rep, treatment, start_date, bud_location, day_08) %>%
+  spread(bud_location, day_08) %>% 
+  #opposite of gather, it is splitting the column bud onto the various categories and assigning them the values ar day08
+  mutate(winner = ifelse(top > bottom, "winner_top", 
+                  ifelse(top <= bottom, "winner_bottom", 
+                                ifelse("NA")))) %>%
+  # Since you've added a repeat column, this needs to be included in the arrangement.
+  gather(bud_location, day_08, bottom, top)
+#now you gather them back into a bud column 
+
+data_raw_winner = full_join(data_raw, outcome.nodes)
+#now join it back to the original table
+
+# the following is not very elegant but works
+# create object for top_winning cases and call the top bud the longer bud
+
+longer_top <- filter(data_raw_winner, winner == "winner_top" & bud_location=="top") %>% mutate(status = "Longer bud")
+
+# do the same for bottom-winning cases
+
+longer_bottom <- filter(data_raw_winner, winner == "winner_bottom" & bud_location=="bottom") %>% mutate(status = "Longer bud")
+
+longer_together = rbind(longer_bottom, longer_top)
+
+data_raw_new = left_join(data_raw_winner, longer_together)
+#now join it back to the original table - left join here is ideal as keeps rows from data_raw and attaches new columns. NAs are introduced in all the non longer bud cases
+
+#replace NA with shorter bud
+data_raw_new$status[is.na(data_raw_new$status)] <- "Shorter bud"
+
+# now we have these new identifiers
+#we gather as it was done on the classical data and do the renaming
+
+data_new <- gather(data_raw_new, key = "day", value = "bud_length",
+               day_00, day_01, day_02, day_03, day_04, day_05, day_06, day_07, day_08) 
+data_new$day <- gsub("day_0","", data_new$day)
+
+data_new$genotype <- gsub("sAPL:icals3m","SAPL:icals3m", data_new$genotype)
+data_new$genotype <- gsub("brc1-2","brc1", data_new$genotype)
+data_new$genotype <- gsub("d14","d14\n", data_new$genotype)
+data_new$genotype <- gsub("brc1","brc1\n", data_new$genotype)
+data_new$genotype <- gsub("pin3,4,7","pin3,4,7\n", data_new$genotype)
+data_new$treatment <- gsub("CK", "CK (0.1uM)", data_new$treatment)
+data_new$treatment <- gsub(".EST", " +\nEST (10uM)", data_new$treatment)
+
+data_new$day <- as.numeric(data_new$day)
+
+data_new <- data_new %>% mutate(genotype = factor(genotype, levels = c("d14\n SAPL:icals3m", "brc1\n SAPL:icals3m", "pin3,4,7\n SAPL:icals3m"))) %>% mutate(assay="2-nodes with intact apices")
+
+# to plot mean bud length and SE we need to do some more rearranging
+
+#calculate mean and ds
+stats_new <- data_new %>% 
+  group_by(assay, genotype, treatment, status, rep, day) %>% 
+  dplyr::summarise(mean = mean(bud_length, na.rm = TRUE),
+                   sd = sd(bud_length, na.rm = TRUE))
+
+#calculate n 
+stats2_new <- data_new %>% 
+  group_by(assay, genotype, treatment, status, day) %>% tally()
+
+# calculate SE - such a nightmare
+stats3_new <- merge(stats_new,stats2_new,by=c("genotype", "assay", "treatment", "status", "day")) %>% mutate(SE = sd/sqrt(n))
+
+plot2 <- ggplot(stats3_new, aes(x=day, y=mean, colour=treatment)) + 
+geom_vline(data=filter(stats3_new, genotype=="d14\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=6), size=2, colour="orange1", alpha=0.5) +
+  geom_vline(data=filter(stats3_new, genotype=="d14\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=6), size=2, colour="steelblue2", alpha=0.5) +
+  geom_vline(data=filter(stats3_new, genotype=="d14\n SAPL:icals3m" & status=="Shorter bud"), aes(xintercept=7), size=2, colour="coral", alpha=0.5) +
+  geom_vline(data=filter(stats3_new, genotype=="d14\n SAPL:icals3m" & status=="Shorter bud"), aes(xintercept=6), size=2, colour="royalblue", alpha=0.5) +
+  geom_vline(data=filter(stats3_new, genotype=="brc1\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=5), size=2, colour="orange1", alpha=0.5) +
+  geom_vline(data=filter(stats3_new, genotype=="brc1\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=5), size=2, colour="steelblue2", alpha=0.5) +
+  geom_vline(data=filter(stats3_new, genotype=="brc1\n SAPL:icals3m" & status=="Shorter bud"), aes(xintercept=5), size=2, colour="orange1", alpha=0.5) +
+  geom_vline(data=filter(stats3_new, genotype=="brc1\n SAPL:icals3m" & status=="Shorter bud"), aes(xintercept=5), size=2, colour="steelblue2", alpha=0.5) +
+  geom_vline(data=filter(stats3_new, genotype=="pin3,4,7\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=6), size=2, colour="orange1", alpha=0.5) +
+  geom_vline(data=filter(stats3_new, genotype=="pin3,4,7\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=6), size=2, colour="steelblue2", alpha=0.5) +
+  geom_errorbar(aes(ymin=mean-SE, ymax=mean+SE), width=.3, colour="black") +
+    geom_line(size=1) +
+    geom_point(size=2)+
+    theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_text(size = 16), 
+        axis.title.y = element_text(size = 16), 
+        axis.text.x = element_text(size = 16), 
+        axis.text.y = element_text(size = 16), 
+        strip.text.x = element_text(size = 14), 
+        strip.text.y = element_text(size = 14), 
+        legend.text = element_text(size=14),
+        legend.title = element_blank()) +   
+  labs(x="Days", y="Mean bud length \u00b1 SE (mm)") +
+  scale_colour_manual(values = c("coral", "royalblue"))+
+  theme(legend.position = "none") +
+  facet_grid(status ~ assay + genotype)+
+  scale_x_continuous(breaks=seq(0,8,1))
+
+plot2
+
+
+# statistical testing for treatments at each day
+
+data_new %>% group_by(genotype, day, status) %>% do(tidy(wilcox.test(bud_length~treatment, data=.)))%>% ungroup() %>%
+  mutate(p.adjust=p.adjust(p.value, method = "fdr"))
+
+```
+
+```{r}
+
+# automatic parameter extraction
+
+source("../scripts/one_node_metrics.R")
+
+metrics_summary <- data_new %>% 
+  nest(data = c(-sample_id, - assay, -genotype, -treatment, -status, -start_date, - assay)) %>% 
+  # Run the one_node_metrics function on each individual growth curve
+  mutate(segmented_data = map(data, ~ one_node_metrics(.x$day, .x$bud_length))) %>%
+  unnest(cols = c(segmented_data))
+
+```
+
+### breakpoint day
+
+```{r}
+
+# incorporated dashed lines that connect the single 2 nodes
+
+plot3 <- metrics_summary %>% 
+  group_by(status, sample_id, genotype, treatment) %>% 
+  ggplot(aes(x = status, y = breakpoint_day, fill=treatment, colour=treatment)) +
+  geom_violin(alpha=0.25) +
+  geom_line(aes(group = interaction(genotype, sample_id, treatment)), colour = "black", linetype="dashed", alpha=0.3) +
+  geom_quasirandom(width = 0.1, alpha = 0.6, dodge.width = 0.9) +
+  stat_summary(fun.y = median, fun.ymin = median, fun.ymax = median, geom = "crossbar", colour = "black", size = 0.5, width = 0.3, alpha=1, position = dodge) +
+  scale_fill_manual(values = c("coral","royalblue", "black")) +
+  scale_colour_manual(values = c("coral","royalblue", "black"))+ 
+  theme(legend.position = "none") +
+  theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_blank(), 
+        axis.title.y =element_text(size = 22), 
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 22), 
+        axis.text.y = element_text(size = 22), 
+        strip.text.x = element_text(size = 20), 
+        strip.text.y = element_text(size = 22),
+        legend.title = element_blank()) + 
+  scale_y_continuous(limits= c(2,7), breaks = c(2,3,4,5,6,7)) +
+  ylab("Breakpoint day for \n actively growing buds") +
+  facet_grid(assay~genotype+treatment)
+
+# last line is just a trick for me to overlay panels in my figure 
+
+plot3
+
+a <- metrics_summary %>% select(genotype, treatment, status, breakpoint_day) %>%   group_by(genotype, status, treatment) %>% summarise(median=median(breakpoint_day, na.rm=TRUE))
+
+# all 6 but all the brc ones at 5 
+
+metrics_summary %>%  select(sample_id, genotype, treatment, status, breakpoint_day) %>% drop_na() %>%
+  group_by(genotype, status) %>% 
+  summarise(test=list(ks.test(breakpoint_day[treatment=="CK (0.1uM)"], breakpoint_day[treatment=="CK (0.1uM) +\nEST (10uM)"]))) %>%
+  mutate(tidy_test=map(test, tidy)) %>%
+  unnest(tidy_test) %>% mutate(p_adj=p.adjust(p.value, method = "fdr"))
+
+```
+
+
+
+# % of active 2 nodes (slightly different from one node calculation)
+
+```{r}
+
+outcome.nodes =
+  data_raw %>%
+  select(sample_id, genotype, rep, treatment, bud_location, day_08) %>%
+  spread(bud_location, day_08) %>% 
+  #opposite of gather, it is splitting the column bud onto the various categories and assigning them the values ar day08
+  mutate(winner = ifelse(top > 5 & bottom > 5, "both", 
+                         ifelse(top <= 5 & bottom > 5, "bottom", 
+                                ifelse(top > 5 & bottom <= 5, "top",
+                                       "NA")))) %>%
+  # Since you've added a repeat column, this needs to be included in the arrangement.
+  gather(bud_location, day_08, bottom, top)
+#now you gather them back into a bud column 
+
+data_perc = full_join(data_raw, outcome.nodes)
+#now join it back to the original table
+
+x <- data_perc %>% group_by(genotype, rep, treatment, bud_location) %>% filter (bud_location=="bottom") %>% count()
+
+# filter for one bud otherwise double count as it counts both top and bottom for same 2 node
+
+y <- data_perc %>%  filter(winner == "NA") %>%
+  filter(bud_location == "bottom") %>% group_by(genotype, rep, treatment, bud_location) %>% count() %>% rename(failed=n)
+
+x <- x %>%
+  full_join(y) 
+
+# to turn the NA into 0
+x[is.na(x)] <- 0
+
+x <- x %>%
+  mutate(percentage = (failed/n)*100) %>%
+  mutate(active = 100-percentage)
+
+# some renaming and ordering
+
+x$genotype <- gsub("sAPL:icals3m","SAPL:icals3m", x$genotype)
+x$genotype <- gsub("brc1-2","brc1", x$genotype)
+x$genotype <- gsub("d14","d14\n", x$genotype)
+x$genotype <- gsub("brc1","brc1\n", x$genotype)
+x$genotype <- gsub("pin3,4,7","pin3,4,7\n", x$genotype)
+x$treatment <- gsub("CK", "CK (0.1uM)", x$treatment)
+x$treatment <- gsub(".EST", " +\nEST (10uM)", x$treatment)
+
+
+x <- x %>% ungroup() %>%  mutate(genotype = factor(genotype, levels = c("d14\n SAPL:icals3m", "brc1\n SAPL:icals3m", "pin3,4,7\n SAPL:icals3m")))
+
+plot6 <- ggplot(x, aes(x=treatment, y=active, fill = treatment, colour = treatment)) + geom_point(size=4) +  
+  xlab("Genotype") +
+    theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_blank(), 
+        axis.title.y = element_text(size = 14), 
+        axis.text.x = element_blank(), 
+        axis.text.y = element_text(size = 14), 
+        strip.text.x = element_text(size = 14), 
+        strip.text.y = element_text(size = 14), 
+        legend.text = element_text(size=14),
+        legend.title = element_blank()) + scale_y_continuous(name="% of explants with at \nleast one active bud", limits=c(0, 100), breaks = c(0,25, 50, 75, 100)) +
+  scale_colour_manual(values = c("coral", "royalblue")) + 
+  theme(legend.position = "bottom") +
+  facet_grid( ~ genotype)
+
+plot6
+
+```
+
+
+```{r}
+
+# keep only those that grew
+
+x <- metrics_summary %>%
+ drop_na() %>% select(assay, genotype, treatment, sample_id, status)
+
+# from 338 to 198 samples. 140 discarded
+
+```
+
+
+```{r}
+
+# automatic parameter extraction
+
+source("../scripts/growth_metrics.R")
+
+metrics_summary <- data_new %>% 
+  nest(data = c(-sample_id, -genotype, -assay, -treatment, -status, -start_date)) %>% 
+  # Run the one_node_metrics function on each individual growth curve
+  mutate(segmented_data = map(data, ~ one_node_metrics(.x$day, .x$bud_length))) %>%
+  unnest(cols = c(segmented_data))
+
+```
+
+
+```{r}
+
+# inner join to retain growth of only active buds
+
+a <- inner_join(metrics_summary, x)
+
+# 1782 samples from #3042. Each dropped bud would have 9 rows. 140x9 = 1260 makes sense
+
+# antijoin to retain growth of non active buds
+
+b <- anti_join(metrics_summary, x)
+
+```
+
+### growth rate 
+
+```{r}
+
+a$day <- as.factor(a$day)
+b$day <- as.factor(b$day)
+
+plot2 <- ggplot(a, aes(x=day, y=d1_measured, fill=treatment)) +  geom_boxplot(alpha=0.8) +
+geom_vline(data=filter(a, genotype=="d14\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=6), size=2, colour="orange1", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="d14\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=6), size=2, colour="steelblue2", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="d14\n SAPL:icals3m" & status=="Shorter bud"), aes(xintercept=7), size=2, colour="coral", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="d14\n SAPL:icals3m" & status=="Shorter bud"), aes(xintercept=6), size=2, colour="royalblue", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="brc1\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=5), size=2, colour="orange1", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="brc1\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=5), size=2, colour="steelblue2", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="brc1\n SAPL:icals3m" & status=="Shorter bud"), aes(xintercept=5), size=2, colour="orange1", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="brc1\n SAPL:icals3m" & status=="Shorter bud"), aes(xintercept=5), size=2, colour="steelblue2", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="pin3,4,7\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=6), size=2, colour="orange1", alpha=0.5) +
+  geom_vline(data=filter(a, genotype=="pin3,4,7\n SAPL:icals3m" & status=="Longer bud"), aes(xintercept=6), size=2, colour="steelblue2", alpha=0.5) +
+  #geom_rect(data=filter(metrics_summary, genotype=="d14\n SAPL:icals3m" & status=="Longer bud"), aes(xmin = 4.5, xmax = 9.5, ymin = -Inf, ymax = Inf), fill = "pink", alpha = 0.01) + 
+  #geom_rect(data=filter(metrics_summary, genotype=="d14\n SAPL:icals3m" & status=="Shorter bud"), aes(xmin = 7.5, xmax = 9.5, ymin = -Inf, ymax = Inf), fill = "pink", alpha = 0.01) +
+  #geom_rect(data=filter(metrics_summary, genotype=="brc1\n SAPL:icals3m" & status=="Longer bud"), aes(xmin = 6.5, xmax = 9.5, ymin = -Inf, ymax = Inf), fill = "pink", alpha = 0.01) +
+  #geom_rect(data=filter(metrics_summary, genotype=="brc1\n SAPL:icals3m" & status=="Shorter bud"), aes(xmin = 8.5, xmax = 9.5, ymin = -Inf, ymax = Inf), fill = "pink", alpha = 0.01) +
+  geom_boxplot(alpha=0.5) +
+    theme(plot.title = element_text(hjust=.5, size = 10),
+        axis.title.x = element_text(size = 16), 
+        axis.title.y = element_text(size = 16), 
+        axis.text.x = element_text(size = 16), 
+        axis.text.y = element_text(size = 16), 
+        strip.text.x = element_text(size = 14), 
+        strip.text.y = element_text(size = 14), 
+        legend.text = element_text(size=14),
+        legend.title = element_blank()) +   
+  labs(x="Days", y="Growth rate in active buds (mm/day)") +
+  scale_fill_manual(values = c("coral", "royalblue"))+
+  theme(legend.position = "none") +
+  facet_grid(status ~ assay + genotype) 
+
+plot2
+
+metrics_summary %>% drop_na() %>% group_by(genotype, day, status) %>% do(tidy(wilcox.test(d1_measured~treatment, data=.)))%>% ungroup() %>%
+  mutate(p.adjust=p.adjust(p.value, method = "fdr"))
+
+```
