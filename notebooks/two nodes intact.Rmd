@@ -251,6 +251,7 @@ a_new <- data_new %>% group_by(genotype, day, status) %>% do(tidy(wilcox.test(bu
 source("../scripts/one_node_metrics.R")
 
 metrics_summary <- data_new %>% 
+  as_tibble() %>% 
   nest(data = c(-sample_id, - assay, -genotype, -treatment, -status, -start_date)) %>% 
   # Run the one_node_metrics function on each individual growth curve
   mutate(segmented_data = map(data, ~ one_node_metrics(.x$day, .x$bud_length))) %>%
@@ -399,6 +400,7 @@ x <- metrics_summary %>%
 source("../scripts/growth_metrics.R")
 
 metrics_summary <- data_new %>% 
+  as_tibble() %>% 
   nest(data = c(-sample_id, -genotype, -treatment, - assay, -status, -start_date)) %>% 
   # Run the one_node_metrics function on each individual growth curve
   mutate(segmented_data = map(data, ~ one_node_metrics(.x$day, .x$bud_length))) %>%
