@@ -1,6 +1,6 @@
-## Calculating metrics
-# requires tidyverse and segmented packages
+## Calculating growth metrics
 
+#
 one_node_metrics <- function(day, bud_length){
   if(length(day) != length(bud_length)){
     stop("day and bud_length have to be of same length")
